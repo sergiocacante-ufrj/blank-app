@@ -353,15 +353,16 @@ st.markdown("---")
 
 st.header("Entrada de dados")
 
-with st.form("input_form"):
+analysis_mode = st.radio(
+    "Tipo de análise",
+    [
+        "Somente consolidação 1D",
+        "Comparação: consolidação 1D vs geodrenos"
+    ],
+    key="analysis_mode"
+)
 
-    analysis_mode = st.radio(
-        "Tipo de análise",
-        [
-            "Somente consolidação 1D",
-            "Comparação: consolidação 1D vs geodrenos"
-        ]
-    )
+with st.form("input_form"):
 
     col1, col2, col3 = st.columns(3)
 
