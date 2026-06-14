@@ -387,6 +387,14 @@ with st.form("input_form"):
 
         st.subheader("Parâmetros dos geodrenos")
 
+    if analysis_mode == "Comparação: consolidação 1D vs geodrenos":
+
+        st.subheader("Geometria dos geodrenos")
+
+        st.image(
+            "malha.png",
+            use_container_width=True
+        )
         col4, col5, col6 = st.columns(3)
 
         with col4:
