@@ -84,11 +84,9 @@ def calculate_terzaghi(H, cv, delta_sigma, mv, drainage_1D, t_max_days, n_t, n_z
     if drainage_1D == "Drenagem dupla":
         u_laplace = u_laplace_double
         avg_u_laplace = avg_u_laplace_double
-        hd = H / 2
     else:
         u_laplace = u_laplace_single
         avg_u_laplace = avg_u_laplace_single
-        hd = H
 
     u_matrix = np.zeros((n_t, n_z))
     u_avg = np.zeros(n_t)
@@ -127,8 +125,7 @@ def calculate_terzaghi(H, cv, delta_sigma, mv, drainage_1D, t_max_days, n_t, n_z
         "u_avg": u_avg,
         "U": U_1D,
         "settlement": settlement,
-        "u_matrix": u_matrix,
-        "hd": hd
+        "u_matrix": u_matrix
     }
 
 
@@ -279,7 +276,6 @@ def plot_characteristic_times(t50_1D, t90_1D, t95_1D, t50_geo=None, t90_geo=None
     ]
 
     fig, ax = plt.subplots(figsize=(8, 5))
-
     x = np.arange(len(labels))
     width = 0.35
 
@@ -313,38 +309,44 @@ st.title("🌍 GeoLaplace")
 st.subheader("Ferramenta interativa para análise de consolidação em solos moles")
 
 st.markdown("""
-**GeoLaplace** é uma ferramenta computacional educacional para avaliar a consolidação de
-camadas de argila saturada submetidas a uma carga distribuída.  
-A aplicação permite comparar dois cenários:
+**GeoLaplace** é uma ferramenta computacional educacional para avaliar a consolidação
+de camadas de argila saturada submetidas a uma carga distribuída.
+
+A aplicação permite analisar dois cenários:
 
 1. **Consolidação unidimensional de Terzaghi**, resolvida no domínio de Laplace.
-2. **Consolidação com geodrenos**, considerando drenagem radial por Barron e combinação
-vertical-radial por Carrillo.
+2. **Consolidação com geodrenos**, considerando drenagem radial por Barron e combinação vertical-radial por Carrillo.
 """)
 
 image_path = "Casos de Analisis.png"
 
 if os.path.exists(image_path):
-    st.image(image_path, caption="Esquema conceitual dos dois casos de análise.", use_container_width=True)
+    st.image(
+        image_path,
+        caption="Esquema conceitual dos casos de análise.",
+        use_container_width=True
+    )
 else:
-    st.warning("Imagem não encontrada. Coloque o arquivo 'Casos de Analisis.png' na mesma pasta do streamlit_app.py.")
+    st.error(f"Imagem não encontrada: {image_path}")
+    st.write("Arquivos disponíveis na pasta:")
+    st.write(os.listdir("."))
 
 st.markdown("---")
 
 st.header("Parâmetros utilizados")
 
 st.markdown("""
-| Parâmetro | Significado | Unidade |
+| Símbolo | Significado | Unidade |
 |---|---|---|
-| \(H\) | Espessura da camada de argila | m |
-| \(c_v\) | Coeficiente de consolidação vertical | m²/s |
-| \(c_h\) | Coeficiente de consolidação horizontal | m²/s |
-| \(\Delta\sigma\) | Sobrecarga ou incremento de tensão vertical | kPa |
-| \(m_v\) | Coeficiente de compressibilidade volumétrica | 1/kPa |
-| \(s\) | Espaçamento entre geodrenos | m |
-| \(a\) | Largura do geodreno | m |
-| \(b\) | Espessura do geodreno | m |
-| \(t\) | Tempo de análise | dias |
+| H | Espessura da camada de argila | m |
+| cv | Coeficiente de consolidação vertical | m²/s |
+| ch | Coeficiente de consolidação horizontal | m²/s |
+| Δσ | Sobrecarga ou incremento de tensão vertical | kPa |
+| mv | Coeficiente de compressibilidade volumétrica | 1/kPa |
+| s | Espaçamento entre geodrenos | m |
+| a | Largura do geodreno | m |
+| b | Espessura do geodreno | m |
+| t | Tempo de análise | dias |
 """)
 
 st.markdown("---")
@@ -366,7 +368,10 @@ with st.form("input_form"):
     with col1:
         H = st.number_input("Espessura H [m]", value=6.0, min_value=0.1)
         cv = st.number_input("cv [m²/s]", value=1.2e-7, format="%.2e")
-        drainage_1D = st.selectbox("Condição de drenagem", ["Drenagem dupla", "Drenagem simples"])
+        drainage_1D = st.selectbox(
+            "Condição de drenagem",
+            ["Drenagem dupla", "Drenagem simples"]
+        )
 
     with col2:
         delta_sigma = st.number_input("Sobrecarga Δσ [kPa]", value=80.0)
@@ -378,6 +383,7 @@ with st.form("input_form"):
         n_z = st.slider("Pontos em profundidade", 10, 40, 20)
 
     if analysis_mode == "Comparação: consolidação 1D vs geodrenos":
+
         st.subheader("Parâmetros dos geodrenos")
 
         col4, col5, col6 = st.columns(3)
@@ -460,28 +466,14 @@ if submitted:
         if geodrains is not None:
             data = {
                 "Indicador": ["t50 [dias]", "t90 [dias]", "t95 [dias]", "Recalque final [cm]"],
-                "Terzaghi 1D": [
-                    t50_1D,
-                    t90_1D,
-                    t95_1D,
-                    S_final * 100
-                ],
-                "Geodrenos": [
-                    t50_geo,
-                    t90_geo,
-                    t95_geo,
-                    S_final * 100
-                ]
+                "Terzaghi 1D": [t50_1D, t90_1D, t95_1D, S_final * 100],
+                "Geodrenos": [t50_geo, t90_geo, t95_geo, S_final * 100]
             }
+
         else:
             data = {
                 "Indicador": ["t50 [dias]", "t90 [dias]", "t95 [dias]", "Recalque final [cm]"],
-                "Terzaghi 1D": [
-                    t50_1D,
-                    t90_1D,
-                    t95_1D,
-                    S_final * 100
-                ]
+                "Terzaghi 1D": [t50_1D, t90_1D, t95_1D, S_final * 100]
             }
 
         st.dataframe(data, use_container_width=True)
@@ -547,16 +539,18 @@ if submitted:
         if geodrains is not None:
             st.markdown(f"""
             Para os parâmetros inseridos, o recalque final primário estimado é de
-            **{S_final * 100:.2f} cm** nos dois casos. Isso ocorre porque o recalque final
-            depende de \(m_v\), \(\Delta\sigma\) e \(H\), e não diretamente da presença dos geodrenos.
+            **{S_final * 100:.2f} cm** nos dois casos.
+
+            Isso ocorre porque o recalque final depende principalmente de **mv**, **Δσ** e **H**,
+            e não diretamente da presença dos geodrenos.
 
             A diferença fundamental está no tempo necessário para atingir esse recalque.
-            No modelo 1D, a dissipação do excesso de pressão neutra ocorre principalmente
-            por drenagem vertical. Com geodrenos, a água passa a escoar radialmente em direção
-            aos drenos, encurtando o caminho de drenagem e acelerando a consolidação.
+            No modelo 1D, a dissipação do excesso de pressão neutra ocorre por drenagem vertical.
+            Com geodrenos, a água passa a escoar radialmente em direção aos drenos,
+            encurtando o caminho de drenagem e acelerando a consolidação.
 
-            Assim, os geodrenos **não aumentam o recalque final primário**, mas reduzem
-            significativamente o tempo necessário para atingi-lo.
+            Portanto, os geodrenos **não aumentam o recalque final primário**.
+            Eles reduzem significativamente o tempo necessário para atingi-lo.
             """)
         else:
             st.markdown(f"""
@@ -573,65 +567,57 @@ if submitted:
 
         st.subheader("Sustento teórico")
 
-        st.markdown(r"""
-        ### 1. Consolidação unidimensional de Terzaghi
+        st.markdown("### 1. Consolidação unidimensional de Terzaghi")
+        st.write("A equação governante é:")
 
-        A equação governante é:
-
-        \[
+        st.latex(r"""
         \frac{\partial u(z,t)}{\partial t}
         =
         c_v
         \frac{\partial^2 u(z,t)}{\partial z^2}
-        \]
+        """)
 
-        onde \(u(z,t)\) é o excesso de pressão neutra.
+        st.write("Condição inicial:")
 
-        A condição inicial é:
-
-        \[
+        st.latex(r"""
         u(z,0)=\Delta\sigma
-        \]
+        """)
 
-        Para drenagem dupla:
+        st.write("Para drenagem dupla:")
 
-        \[
+        st.latex(r"""
         u(0,t)=0
-        \]
+        """)
 
-        \[
+        st.latex(r"""
         u(H,t)=0
-        \]
+        """)
 
-        Para drenagem simples:
+        st.write("Para drenagem simples:")
 
-        \[
+        st.latex(r"""
         u(0,t)=0
-        \]
+        """)
 
-        \[
+        st.latex(r"""
         \frac{\partial u(H,t)}{\partial z}=0
-        \]
+        """)
 
-        Aplicando a Transformada de Laplace em relação ao tempo:
+        st.write("Aplicando a Transformada de Laplace no tempo:")
 
-        \[
+        st.latex(r"""
         sU(z,s)-u(z,0)
         =
-        c_v \frac{d^2U(z,s)}{dz^2}
-        \]
+        c_v
+        \frac{d^2U(z,s)}{dz^2}
+        """)
 
-        Essa expressão transforma a equação diferencial parcial em uma equação diferencial
-        ordinária no domínio de Laplace.
+        st.markdown("---")
 
-        ---
+        st.markdown("### 2. Consolidação radial com geodrenos")
+        st.write("A equação idealizada para drenagem radial é:")
 
-        ### 2. Consolidação radial com geodrenos
-
-        Com geodrenos, o fluxo deixa de ser apenas vertical e passa a ocorrer também na
-        direção radial. A equação idealizada para drenagem radial é:
-
-        \[
+        st.latex(r"""
         \frac{\partial u(r,t)}{\partial t}
         =
         c_h
@@ -641,61 +627,46 @@ if submitted:
         \frac{1}{r}
         \frac{\partial u}{\partial r}
         \right)
-        \]
+        """)
 
-        O fator de tempo horizontal é:
+        st.write("O fator de tempo horizontal é:")
 
-        \[
+        st.latex(r"""
         T_h=\frac{c_h t}{d_e^2}
-        \]
+        """)
 
-        A solução média de Barron para deformações verticais iguais pode ser representada por:
+        st.write("A solução média de Barron é:")
 
-        \[
+        st.latex(r"""
         U_h = 1 - \exp\left(-\frac{8T_h}{F(n)}\right)
-        \]
+        """)
 
-        onde:
+        st.latex(r"""
+        n=\frac{d_e}{d_w}
+        """)
 
-        \[
-        n = \frac{d_e}{d_w}
-        \]
-
-        \[
+        st.latex(r"""
         F(n)=\ln(n)-0.75
-        \]
+        """)
 
-        ---
+        st.markdown("---")
 
-        ### 3. Consolidação combinada de Carrillo
+        st.markdown("### 3. Consolidação combinada de Carrillo")
 
-        Quando há simultaneamente drenagem vertical e radial:
-
-        \[
+        st.latex(r"""
         U = 1-(1-U_v)(1-U_h)
-        \]
+        """)
 
-        onde:
+        st.markdown("---")
 
-        - \(U_v\) é o grau de consolidação vertical;
-        - \(U_h\) é o grau de consolidação radial;
-        - \(U\) é o grau de consolidação combinado.
+        st.markdown("### 4. Recalque primário")
 
-        ---
+        st.latex(r"""
+        S_f=m_v\Delta\sigma H
+        """)
 
-        ### 4. Recalque primário
-
-        O recalque final primário é estimado por:
-
-        \[
-        S_f = m_v \Delta\sigma H
-        \]
-
-        O recalque no tempo é:
-
-        \[
+        st.latex(r"""
         S(t)=U(t)S_f
-        \]
         """)
 
 else:
