@@ -556,7 +556,7 @@ with st.form("input_form"):
 
         with col4:
             ch = st.number_input("ch [m²/s]", value=5.3e-6, format="%.2e")
-            spacing = st.number_input("Espaçamento entre geodrenos s [m]", value=5, min_value=0.1)
+            spacing = st.number_input("Espaçamento entre geodrenos s [m]", value=5.0, min_value=0.1)
 
         with col5:
             pattern = st.selectbox("Tipo de malha", ["Malha triangular", "Malha quadrada"])
