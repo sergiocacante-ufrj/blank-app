@@ -314,11 +314,11 @@ def show_pyplot(fig):
 # ============================================================
 
 st.title("🌍 GeoLaplace")
-st.caption("GeoLaplace v1.0 — Ferramenta educacional de análise de consolidação")
+st.caption("GeoLaplace v1.0 — Ferramenta de análise de consolidação")
 st.subheader("Ferramenta interativa para análise de consolidação em solos moles")
 
 st.markdown("""
-**GeoLaplace** é uma ferramenta computacional educacional para avaliar a consolidação
+**GeoLaplace** é uma ferramenta computacional para avaliar a consolidação
 de camadas de argila saturada submetidas a uma carga distribuída.
 
 A aplicação permite analisar dois cenários:
@@ -346,7 +346,7 @@ st.markdown("""
 | H | Espessura da camada de argila | m |
 | cv | Coeficiente de consolidação vertical | m²/s |
 | ch | Coeficiente de consolidação horizontal | m²/s |
-| Δσ | Sobrecarga ou incremento de tensão vertical | kPa |
+| Δσ | Sobrecarga ou incremento de tensão v ertical | kPa |
 | mv | Coeficiente de compressibilidade volumétrica | 1/kPa |
 | s | Espaçamento entre geodrenos | m |
 | a | Largura do geodreno | m |
