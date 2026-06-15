@@ -457,7 +457,7 @@ st.title("🌍 GeoLaplace")
 st.subheader("Ferramenta interativa para análise de consolidação em solos moles")
 
 st.markdown("""
-**GeoLaplace** é uma ferramenta computacional educacional para avaliar a consolidação
+**GeoLaplace** é uma ferramenta computacional para avaliar a consolidação
 de camadas de argila saturada submetidas a uma carga distribuída.
 
 A aplicação permite analisar dois cenários:
@@ -515,16 +515,16 @@ with st.form("input_form"):
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        H = st.number_input("Espessura H [m]", value=6.0, min_value=0.1)
-        cv = st.number_input("cv [m²/s]", value=1.2e-7, format="%.2e")
+        H = st.number_input("Espessura H [m]", value=10.0, min_value=0.1)
+        cv = st.number_input("cv [m²/s]", value=3.0e-7, format="%.2e")
         drainage_1D = st.selectbox(
             "Condição de drenagem",
             ["Drenagem dupla", "Drenagem simples"]
         )
 
     with col2:
-        delta_sigma = st.number_input("Sobrecarga Δσ [kPa]", value=80.0)
-        mv = st.number_input("mv [1/kPa]", value=4.0e-4, format="%.2e")
+        delta_sigma = st.number_input("Sobrecarga Δσ [kPa]", value=63.2)
+        mv = st.number_input("mv [1/kPa]", value=0.003, format="%.2e")
         t_max_days = st.number_input("Tempo máximo [dias]", value=1000.0, min_value=1.0)
 
     with col3:
@@ -555,8 +555,8 @@ with st.form("input_form"):
         col4, col5, col6 = st.columns(3)
 
         with col4:
-            ch = st.number_input("ch [m²/s]", value=2.0e-7, format="%.2e")
-            spacing = st.number_input("Espaçamento entre geodrenos s [m]", value=1.5, min_value=0.1)
+            ch = st.number_input("ch [m²/s]", value=5.3e-6, format="%.2e")
+            spacing = st.number_input("Espaçamento entre geodrenos s [m]", value=5, min_value=0.1)
 
         with col5:
             pattern = st.selectbox("Tipo de malha", ["Malha triangular", "Malha quadrada"])
