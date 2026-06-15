@@ -1,5 +1,4 @@
 import os
-import gc
 import numpy as np
 import matplotlib.pyplot as plt
 import mpmath as mp
@@ -15,15 +14,13 @@ st.set_page_config(
     layout="wide"
 )
 
-# Precisión suficiente para la inversión numérica sin sobrecargar memoria/tiempo
-mp.mp.dps = 24
+mp.mp.dps = 30
 
 # ============================================================
 # FUNCIONES DE CÁLCULO
 # ============================================================
 
 def inverse_laplace_value(F, t):
-    """Inversión numérica de Laplace con control básico de errores."""
     try:
         value = mp.invertlaplace(F, t, method="talbot")
         value = float(mp.re(value))
@@ -36,11 +33,11 @@ def time_for_U(U_array, target, t_days):
     if not np.any(U_array >= target):
         return None
     idx = np.argmax(U_array >= target)
-    return float(t_days[idx])
+    return t_days[idx]
 
 
 def Uv_terzaghi_approx(Tv):
-    Uv = np.zeros_like(Tv, dtype=float)
+    Uv = np.zeros_like(Tv)
 
     for i, T in enumerate(Tv):
         if T < 0.287:
@@ -51,16 +48,8 @@ def Uv_terzaghi_approx(Tv):
     return np.clip(Uv, 0, 1)
 
 
+@st.cache_data(show_spinner=False)
 def calculate_terzaghi(H, cv, delta_sigma, mv, drainage_1D, t_max_days, n_t, n_z):
-    """
-    Calcula consolidación 1D con Transformada de Laplace.
-
-    Optimización clave:
-    - Se calcula u promedio para todos los tiempos.
-    - La distribución u(z,t) se calcula solo para 5 tiempos representativos,
-      porque eso es lo que realmente se grafica. Así evitamos crear una matriz
-      grande n_t x n_z y muchas inversiones de Laplace innecesarias.
-    """
 
     t_days = np.linspace(1, t_max_days, n_t)
     t_seconds = t_days * 24 * 3600
@@ -99,43 +88,35 @@ def calculate_terzaghi(H, cv, delta_sigma, mv, drainage_1D, t_max_days, n_t, n_z
         u_laplace = u_laplace_single
         avg_u_laplace = avg_u_laplace_single
 
-    u_avg = np.zeros(n_t, dtype=float)
-    U_1D = np.zeros(n_t, dtype=float)
+    u_matrix = np.zeros((n_t, n_z))
+    u_avg = np.zeros(n_t)
+    U_1D = np.zeros(n_t)
 
     for i, t in enumerate(t_seconds):
+
         F_avg = lambda s: avg_u_laplace(s)
         u_avg[i] = inverse_laplace_value(F_avg, t)
-        U_1D[i] = np.clip(1 - u_avg[i] / delta_sigma, 0, 1)
 
-    settlement = U_1D * S_final
-
-    # Solo se calculan los perfiles que se van a mostrar en la gráfica.
-    profile_indices = np.unique(np.array([
-        0,
-        int(n_t * 0.15),
-        int(n_t * 0.30),
-        int(n_t * 0.60),
-        n_t - 1
-    ], dtype=int))
-
-    u_profiles = np.zeros((len(profile_indices), n_z), dtype=float)
-
-    for p, idx in enumerate(profile_indices):
-        t = t_seconds[idx]
+        U_1D[i] = 1 - u_avg[i] / delta_sigma
+        U_1D[i] = np.clip(U_1D[i], 0, 1)
 
         for j, z in enumerate(z_vals):
+
             if drainage_1D == "Drenagem dupla":
                 if np.isclose(z, 0.0) or np.isclose(z, H):
-                    u_profiles[p, j] = 0.0
+                    u_matrix[i, j] = 0.0
                 else:
                     F = lambda s, z=z: u_laplace(z, s)
-                    u_profiles[p, j] = inverse_laplace_value(F, t)
+                    u_matrix[i, j] = inverse_laplace_value(F, t)
+
             else:
                 if np.isclose(z, 0.0):
-                    u_profiles[p, j] = 0.0
+                    u_matrix[i, j] = 0.0
                 else:
                     F = lambda s, z=z: u_laplace(z, s)
-                    u_profiles[p, j] = inverse_laplace_value(F, t)
+                    u_matrix[i, j] = inverse_laplace_value(F, t)
+
+    settlement = U_1D * S_final
 
     return {
         "t_days": t_days,
@@ -144,12 +125,12 @@ def calculate_terzaghi(H, cv, delta_sigma, mv, drainage_1D, t_max_days, n_t, n_z
         "u_avg": u_avg,
         "U": U_1D,
         "settlement": settlement,
-        "u_profiles": u_profiles,
-        "profile_indices": profile_indices
+        "u_matrix": u_matrix
     }
 
 
 def calculate_geodrains(H, cv, ch, delta_sigma, mv, drainage_1D, spacing, pattern, a, b, t_max_days, n_t):
+
     t_days = np.linspace(1, t_max_days, n_t)
     t_seconds = t_days * 24 * 3600
 
@@ -169,10 +150,6 @@ def calculate_geodrains(H, cv, ch, delta_sigma, mv, drainage_1D, spacing, patter
 
     n = de / dw
     F_n = np.log(n) - 0.75
-
-    # Evita divisiones problemáticas si el usuario pone una geometría no física.
-    if F_n <= 0:
-        F_n = np.nan
 
     Th = ch * t_seconds / de**2
     Uh = 1 - np.exp(-8 * Th / F_n)
@@ -201,16 +178,33 @@ def calculate_geodrains(H, cv, ch, delta_sigma, mv, drainage_1D, spacing, patter
         "F_n": F_n
     }
 
+
 # ============================================================
 # FUNCIONES DE GRÁFICAS
 # ============================================================
 
-def plot_consolidation(t_days, U_1D, U_geo=None):
+def _iter_geodrain_results(geodrains):
+    """
+    Normaliza los resultados de geodrenos para graficar.
+    Puede recibir None, un único diccionario o un diccionario de casos.
+    """
+    if geodrains is None:
+        return []
+
+    # Caso nuevo: {"Malha triangular": {...}, "Malha quadrada": {...}}
+    if isinstance(geodrains, dict) and all(isinstance(v, dict) for v in geodrains.values()) and "U" not in geodrains:
+        return list(geodrains.items())
+
+    # Caso antiguo: un solo resultado de geodrenos
+    return [("Geodrenos - Barron + Carrillo", geodrains)]
+
+
+def plot_consolidation(t_days, U_1D, geodrains=None):
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.plot(t_days, U_1D * 100, linewidth=3, label="Terzaghi 1D - Laplace")
 
-    if U_geo is not None:
-        ax.plot(t_days, U_geo * 100, linewidth=3, label="Geodrenos - Barron + Carrillo")
+    for label, result in _iter_geodrain_results(geodrains):
+        ax.plot(t_days, result["U"] * 100, linewidth=3, label=label)
 
     ax.set_xlabel("Tempo [dias]")
     ax.set_ylabel("Grau de consolidação [%]")
@@ -220,12 +214,12 @@ def plot_consolidation(t_days, U_1D, U_geo=None):
     return fig
 
 
-def plot_settlement(t_days, settlement_1D, S_final, settlement_geo=None):
+def plot_settlement(t_days, settlement_1D, S_final, geodrains=None):
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.plot(t_days, settlement_1D * 100, linewidth=3, label="Terzaghi 1D - Laplace")
 
-    if settlement_geo is not None:
-        ax.plot(t_days, settlement_geo * 100, linewidth=3, label="Geodrenos - Barron + Carrillo")
+    for label, result in _iter_geodrain_results(geodrains):
+        ax.plot(t_days, result["settlement"] * 100, linewidth=3, label=label)
 
     ax.axhline(S_final * 100, linestyle="--", label="Recalque final")
     ax.set_xlabel("Tempo [dias]")
@@ -236,12 +230,12 @@ def plot_settlement(t_days, settlement_1D, S_final, settlement_geo=None):
     return fig
 
 
-def plot_pore_pressure(t_days, u_1D_avg, u_geo_avg=None):
+def plot_pore_pressure(t_days, u_1D_avg, geodrains=None):
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.plot(t_days, u_1D_avg, linewidth=3, label="Terzaghi 1D")
 
-    if u_geo_avg is not None:
-        ax.plot(t_days, u_geo_avg, linewidth=3, label="Geodrenos")
+    for label, result in _iter_geodrain_results(geodrains):
+        ax.plot(t_days, result["u_avg"], linewidth=3, label=label)
 
     ax.set_xlabel("Tempo [dias]")
     ax.set_ylabel("Excesso médio de pressão neutra [kPa]")
@@ -251,12 +245,21 @@ def plot_pore_pressure(t_days, u_1D_avg, u_geo_avg=None):
     return fig
 
 
-def plot_pressure_profile(t_days, z_vals, u_profiles, profile_indices):
+def plot_pressure_profile(t_days, z_vals, u_matrix):
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    for p, idx in enumerate(profile_indices):
+    n_t = len(t_days)
+    times_to_plot = [
+        0,
+        int(n_t * 0.15),
+        int(n_t * 0.30),
+        int(n_t * 0.60),
+        n_t - 1
+    ]
+
+    for idx in times_to_plot:
         ax.plot(
-            u_profiles[p, :],
+            u_matrix[idx, :],
             z_vals,
             linewidth=2,
             label=f"t = {t_days[idx]:.0f} dias"
@@ -268,11 +271,13 @@ def plot_pressure_profile(t_days, z_vals, u_profiles, profile_indices):
     ax.set_title("Distribuição de pressão neutra - Terzaghi 1D")
     ax.grid(True)
     ax.legend()
+
     return fig
 
 
 def plot_characteristic_times(t50_1D, t90_1D, t95_1D, t50_geo=None, t90_geo=None, t95_geo=None):
     labels = ["t50", "t90", "t95"]
+
     terzaghi_times = [
         t50_1D if t50_1D is not None else np.nan,
         t90_1D if t90_1D is not None else np.nan,
@@ -291,6 +296,7 @@ def plot_characteristic_times(t50_1D, t90_1D, t95_1D, t50_geo=None, t90_geo=None
             t90_geo if t90_geo is not None else np.nan,
             t95_geo if t95_geo is not None else np.nan
         ]
+
         ax.bar(x - width / 2, terzaghi_times, width, label="Terzaghi 1D")
         ax.bar(x + width / 2, geo_times, width, label="Geodrenos")
 
@@ -300,25 +306,19 @@ def plot_characteristic_times(t50_1D, t90_1D, t95_1D, t50_geo=None, t90_geo=None
     ax.set_title("Tempos característicos de consolidação")
     ax.grid(True, axis="y")
     ax.legend()
+
     return fig
 
-
-def show_pyplot(fig):
-    """Muestra y libera memoria de figuras Matplotlib."""
-    st.pyplot(fig)
-    plt.close(fig)
-    gc.collect()
 
 # ============================================================
 # INTERFACE
 # ============================================================
 
 st.title("🌍 GeoLaplace")
-st.caption("GeoLaplace v1.0 — Ferramenta de análise de consolidação")
 st.subheader("Ferramenta interativa para análise de consolidação em solos moles")
 
 st.markdown("""
-**GeoLaplace** é uma ferramenta computacional para avaliar a consolidação
+**GeoLaplace** é uma ferramenta computacional educacional para avaliar a consolidação
 de camadas de argila saturada submetidas a uma carga distribuída.
 
 A aplicação permite analisar dois cenários:
@@ -328,6 +328,7 @@ A aplicação permite analisar dois cenários:
 """)
 
 image_path = "Casos de Analisis.png"
+
 if os.path.exists(image_path):
     st.image(
         image_path,
@@ -335,18 +336,21 @@ if os.path.exists(image_path):
         width="stretch"
     )
 else:
-    st.warning(f"Imagem não encontrada: {image_path}")
+    st.error(f"Imagem não encontrada: {image_path}")
+    st.write("Arquivos disponíveis na pasta:")
+    st.write(os.listdir("."))
 
 st.markdown("---")
 
 st.header("Parâmetros utilizados")
+
 st.markdown("""
 | Símbolo | Significado | Unidade |
 |---|---|---|
 | H | Espessura da camada de argila | m |
 | cv | Coeficiente de consolidação vertical | m²/s |
 | ch | Coeficiente de consolidação horizontal | m²/s |
-| Δσ | Sobrecarga ou incremento de tensão v ertical | kPa |
+| Δσ | Sobrecarga ou incremento de tensão vertical | kPa |
 | mv | Coeficiente de compressibilidade volumétrica | 1/kPa |
 | s | Espaçamento entre geodrenos | m |
 | a | Largura do geodreno | m |
@@ -358,17 +362,16 @@ st.markdown("---")
 
 st.header("Entrada de dados")
 
-# Importante: fora do form para atualizar imediatamente os parâmetros dos geodrenos
-analysis_mode = st.radio(
-    "Tipo de análise",
-    [
-        "Somente consolidação 1D",
-        "Comparação: consolidação 1D vs geodrenos"
-    ],
-    key="analysis_mode"
-)
-
 with st.form("input_form"):
+
+    analysis_mode = st.radio(
+        "Tipo de análise",
+        [
+            "Somente consolidação 1D",
+            "Comparação: consolidação 1D vs geodrenos"
+        ]
+    )
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -385,22 +388,13 @@ with st.form("input_form"):
         t_max_days = st.number_input("Tempo máximo [dias]", value=1000.0, min_value=1.0)
 
     with col3:
-        # Limites reducidos para no superar memoria/CPU en Streamlit Community Cloud.
-        n_t = st.slider("Pontos no tempo", 20, 80, 50)
-        n_z = st.slider("Pontos em profundidade", 8, 25, 15)
+        n_t = st.slider("Pontos no tempo", 30, 150, 80)
+        n_z = st.slider("Pontos em profundidade", 10, 40, 20)
 
     if analysis_mode == "Comparação: consolidação 1D vs geodrenos":
-        st.subheader("Geometria dos geodrenos")
-        if os.path.exists("malha.png"):
-            st.image(
-                "malha.png",
-                caption="Padrões de instalação e parâmetros geométricos dos geodrenos.",
-                width="stretch"
-            )
-        else:
-            st.info("Figura 'malha.png' não encontrada. A análise pode ser executada normalmente.")
 
         st.subheader("Parâmetros dos geodrenos")
+
         col4, col5, col6 = st.columns(3)
 
         with col4:
@@ -413,20 +407,27 @@ with st.form("input_form"):
 
         with col6:
             b = st.number_input("Espessura do geodreno b [m]", value=0.005, min_value=0.0001)
+            compare_meshes = st.checkbox(
+                "Comparar malha triangular e quadrada simultaneamente",
+                value=True
+            )
 
     submitted = st.form_submit_button("Executar análise")
+
 
 # ============================================================
 # RESULTADOS
 # ============================================================
 
 if submitted:
+
     with st.spinner("Calculando consolidação 1D por Transformada Inversa de Laplace..."):
         terzaghi = calculate_terzaghi(
             H, cv, delta_sigma, mv, drainage_1D, t_max_days, n_t, n_z
         )
 
     geodrains = None
+
     if analysis_mode == "Comparação: consolidação 1D vs geodrenos":
         geodrains = calculate_geodrains(
             H, cv, ch, delta_sigma, mv, drainage_1D,
@@ -440,23 +441,30 @@ if submitted:
     t90_1D = time_for_U(terzaghi["U"], 0.90, t_days)
     t95_1D = time_for_U(terzaghi["U"], 0.95, t_days)
 
+    geodrain_times = {}
     if geodrains is not None:
-        t50_geo = time_for_U(geodrains["U"], 0.50, t_days)
-        t90_geo = time_for_U(geodrains["U"], 0.90, t_days)
-        t95_geo = time_for_U(geodrains["U"], 0.95, t_days)
-    else:
-        t50_geo = t90_geo = t95_geo = None
+        for label, result in geodrains.items():
+            geodrain_times[label] = {
+                "t50": time_for_U(result["U"], 0.50, t_days),
+                "t90": time_for_U(result["U"], 0.90, t_days),
+                "t95": time_for_U(result["U"], 0.95, t_days)
+            }
 
     st.markdown("---")
     st.header("Resultados")
 
     col1, col2, col3, col4 = st.columns(4)
+
     col1.metric("Recalque final", f"{S_final * 100:.2f} cm")
     col2.metric("U final 1D", f"{terzaghi['U'][-1] * 100:.2f} %")
     col3.metric("u média final 1D", f"{terzaghi['u_avg'][-1]:.2f} kPa")
 
     if geodrains is not None:
-        col4.metric("U final com geodrenos", f"{geodrains['U'][-1] * 100:.2f} %")
+        if len(geodrains) == 1:
+            only_result = next(iter(geodrains.values()))
+            col4.metric("U final com geodrenos", f"{only_result['U'][-1] * 100:.2f} %")
+        else:
+            col4.metric("Modo", "Comparação de malhas")
     else:
         col4.metric("Modo", "1D")
 
@@ -471,62 +479,91 @@ if submitted:
     ])
 
     with tabs[0]:
+
         st.subheader("Resumo numérico")
 
+        data = {
+            "Indicador": ["t50 [dias]", "t90 [dias]", "t95 [dias]", "Recalque final [cm]"],
+            "Terzaghi 1D": [t50_1D, t90_1D, t95_1D, S_final * 100]
+        }
+
         if geodrains is not None:
-            data = {
-                "Indicador": ["t50 [dias]", "t90 [dias]", "t95 [dias]", "Recalque final [cm]"],
-                "Terzaghi 1D": [t50_1D, t90_1D, t95_1D, S_final * 100],
-                "Geodrenos": [t50_geo, t90_geo, t95_geo, S_final * 100]
-            }
-        else:
-            data = {
-                "Indicador": ["t50 [dias]", "t90 [dias]", "t95 [dias]", "Recalque final [cm]"],
-                "Terzaghi 1D": [t50_1D, t90_1D, t95_1D, S_final * 100]
-            }
+            for label, times in geodrain_times.items():
+                data[label] = [
+                    times["t50"],
+                    times["t90"],
+                    times["t95"],
+                    S_final * 100
+                ]
 
         st.dataframe(data, width="stretch")
 
         if geodrains is not None:
             st.subheader("Parâmetros geométricos dos geodrenos")
-            st.write(f"Diâmetro equivalente do geodreno, dw = {geodrains['dw']:.4f} m")
-            st.write(f"Diâmetro de influência, de = {geodrains['de']:.4f} m")
-            st.write(f"Relação n = de/dw = {geodrains['n']:.2f}")
-            st.write(f"F(n) = {geodrains['F_n']:.3f}")
+
+            geom_data = {
+                "Parâmetro": [
+                    "dw - diâmetro equivalente do geodreno [m]",
+                    "de - diâmetro de influência [m]",
+                    "n = de/dw [-]",
+                    "F(n) [-]"
+                ]
+            }
+
+            for label, result in geodrains.items():
+                geom_data[label] = [
+                    f"{result['dw']:.4f}",
+                    f"{result['de']:.4f}",
+                    f"{result['n']:.2f}",
+                    f"{result['F_n']:.3f}"
+                ]
+
+            st.dataframe(geom_data, width="stretch")
 
     with tabs[1]:
+
         fig = plot_consolidation(
             t_days,
             terzaghi["U"],
-            geodrains["U"] if geodrains is not None else None
+            geodrains
         )
-        show_pyplot(fig)
+
+        st.pyplot(fig)
+        plt.close(fig)
 
     with tabs[2]:
+
         fig = plot_settlement(
             t_days,
             terzaghi["settlement"],
             S_final,
-            geodrains["settlement"] if geodrains is not None else None
+            geodrains
         )
-        show_pyplot(fig)
+
+        st.pyplot(fig)
+        plt.close(fig)
 
     with tabs[3]:
+
         fig = plot_pore_pressure(
             t_days,
             terzaghi["u_avg"],
-            geodrains["u_avg"] if geodrains is not None else None
+            geodrains
         )
-        show_pyplot(fig)
+
+        st.pyplot(fig)
+        plt.close(fig)
 
     with tabs[4]:
+
         fig = plot_pressure_profile(
             t_days,
             terzaghi["z_vals"],
-            terzaghi["u_profiles"],
-            terzaghi["profile_indices"]
+            terzaghi["u_matrix"]
         )
-        show_pyplot(fig)
+
+        st.pyplot(fig)
+        plt.close(fig)
 
         st.info(
             "Esta distribuição em profundidade é calculada para o caso 1D de Terzaghi "
@@ -534,6 +571,7 @@ if submitted:
         )
 
     with tabs[5]:
+
         st.subheader("Interpretação técnica")
 
         if geodrains is not None:
@@ -564,10 +602,12 @@ if submitted:
             """)
 
     with tabs[6]:
+
         st.subheader("Sustento teórico")
 
         st.markdown("### 1. Consolidação unidimensional de Terzaghi")
         st.write("A equação governante é:")
+
         st.latex(r"""
         \frac{\partial u(z,t)}{\partial t}
         =
@@ -576,17 +616,33 @@ if submitted:
         """)
 
         st.write("Condição inicial:")
-        st.latex(r"""u(z,0)=\Delta\sigma""")
+
+        st.latex(r"""
+        u(z,0)=\Delta\sigma
+        """)
 
         st.write("Para drenagem dupla:")
-        st.latex(r"""u(0,t)=0""")
-        st.latex(r"""u(H,t)=0""")
+
+        st.latex(r"""
+        u(0,t)=0
+        """)
+
+        st.latex(r"""
+        u(H,t)=0
+        """)
 
         st.write("Para drenagem simples:")
-        st.latex(r"""u(0,t)=0""")
-        st.latex(r"""\frac{\partial u(H,t)}{\partial z}=0""")
+
+        st.latex(r"""
+        u(0,t)=0
+        """)
+
+        st.latex(r"""
+        \frac{\partial u(H,t)}{\partial z}=0
+        """)
 
         st.write("Aplicando a Transformada de Laplace no tempo:")
+
         st.latex(r"""
         sU(z,s)-u(z,0)
         =
@@ -595,8 +651,10 @@ if submitted:
         """)
 
         st.markdown("---")
+
         st.markdown("### 2. Consolidação radial com geodrenos")
         st.write("A equação idealizada para drenagem radial é:")
+
         st.latex(r"""
         \frac{\partial u(r,t)}{\partial t}
         =
@@ -610,24 +668,44 @@ if submitted:
         """)
 
         st.write("O fator de tempo horizontal é:")
-        st.latex(r"""T_h=\frac{c_h t}{d_e^2}""")
+
+        st.latex(r"""
+        T_h=\frac{c_h t}{d_e^2}
+        """)
 
         st.write("A solução média de Barron é:")
-        st.latex(r"""U_h = 1 - \exp\left(-\frac{8T_h}{F(n)}\right)""")
-        st.latex(r"""n=\frac{d_e}{d_w}""")
-        st.latex(r"""F(n)=\ln(n)-0.75""")
+
+        st.latex(r"""
+        U_h = 1 - \exp\left(-\frac{8T_h}{F(n)}\right)
+        """)
+
+        st.latex(r"""
+        n=\frac{d_e}{d_w}
+        """)
+
+        st.latex(r"""
+        F(n)=\ln(n)-0.75
+        """)
 
         st.markdown("---")
+
         st.markdown("### 3. Consolidação combinada de Carrillo")
-        st.latex(r"""U = 1-(1-U_v)(1-U_h)""")
+
+        st.latex(r"""
+        U = 1-(1-U_v)(1-U_h)
+        """)
 
         st.markdown("---")
-        st.markdown("### 4. Recalque primário")
-        st.latex(r"""S_f=m_v\Delta\sigma H""")
-        st.latex(r"""S(t)=U(t)S_f""")
 
-    # Limpieza explícita al terminar el cálculo.
-    gc.collect()
+        st.markdown("### 4. Recalque primário")
+
+        st.latex(r"""
+        S_f=m_v\Delta\sigma H
+        """)
+
+        st.latex(r"""
+        S(t)=U(t)S_f
+        """)
 
 else:
     st.info("Insira os dados e clique em **Executar análise**.")
