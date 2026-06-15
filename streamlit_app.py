@@ -33,7 +33,7 @@ def time_for_U(U_array, target, t_days):
     if not np.any(U_array >= target):
         return None
     idx = np.argmax(U_array >= target)
-    return t_days[idx]
+    return float(t_days[idx])
 
 
 def Uv_terzaghi_approx(Tv):
@@ -145,11 +145,16 @@ def calculate_geodrains(H, cv, ch, delta_sigma, mv, drainage_1D, spacing, patter
 
     if pattern == "Malha triangular":
         de = 1.05 * spacing
-    else:
+    elif pattern == "Malha quadrada":
         de = 1.13 * spacing
+    else:
+        raise ValueError("pattern deve ser 'Malha triangular' ou 'Malha quadrada'")
 
     n = de / dw
     F_n = np.log(n) - 0.75
+
+    if F_n <= 0:
+        F_n = 1e-6
 
     Th = ch * t_seconds / de**2
     Uh = 1 - np.exp(-8 * Th / F_n)
@@ -180,31 +185,31 @@ def calculate_geodrains(H, cv, ch, delta_sigma, mv, drainage_1D, spacing, patter
 
 
 # ============================================================
-# FUNCIONES DE GRÁFICAS
+# FUNCIONES AUXILIARES PARA GEODRENOS
 # ============================================================
 
-def _iter_geodrain_results(geodrains):
-    """
-    Normaliza los resultados de geodrenos para graficar.
-    Puede recibir None, un único diccionario o un diccionario de casos.
-    """
+def iter_geodrain_results(geodrains):
     if geodrains is None:
         return []
+    return list(geodrains.items())
 
-    # Caso nuevo: {"Malha triangular": {...}, "Malha quadrada": {...}}
-    if isinstance(geodrains, dict) and all(isinstance(v, dict) for v in geodrains.values()) and "U" not in geodrains:
-        return list(geodrains.items())
 
-    # Caso antiguo: un solo resultado de geodrenos
-    return [("Geodrenos - Barron + Carrillo", geodrains)]
+def format_time(value):
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return "Não alcança"
+    return f"{value:.1f}"
 
+
+# ============================================================
+# FUNCIONES DE GRÁFICAS
+# ============================================================
 
 def plot_consolidation(t_days, U_1D, geodrains=None):
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.plot(t_days, U_1D * 100, linewidth=3, label="Terzaghi 1D - Laplace")
 
-    for label, result in _iter_geodrain_results(geodrains):
-        ax.plot(t_days, result["U"] * 100, linewidth=3, label=label)
+    for label, result in iter_geodrain_results(geodrains):
+        ax.plot(t_days, result["U"] * 100, linewidth=3, label=f"Geodrenos - {label}")
 
     ax.set_xlabel("Tempo [dias]")
     ax.set_ylabel("Grau de consolidação [%]")
@@ -218,8 +223,8 @@ def plot_settlement(t_days, settlement_1D, S_final, geodrains=None):
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.plot(t_days, settlement_1D * 100, linewidth=3, label="Terzaghi 1D - Laplace")
 
-    for label, result in _iter_geodrain_results(geodrains):
-        ax.plot(t_days, result["settlement"] * 100, linewidth=3, label=label)
+    for label, result in iter_geodrain_results(geodrains):
+        ax.plot(t_days, result["settlement"] * 100, linewidth=3, label=f"Geodrenos - {label}")
 
     ax.axhline(S_final * 100, linestyle="--", label="Recalque final")
     ax.set_xlabel("Tempo [dias]")
@@ -234,8 +239,8 @@ def plot_pore_pressure(t_days, u_1D_avg, geodrains=None):
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.plot(t_days, u_1D_avg, linewidth=3, label="Terzaghi 1D")
 
-    for label, result in _iter_geodrain_results(geodrains):
-        ax.plot(t_days, result["u_avg"], linewidth=3, label=label)
+    for label, result in iter_geodrain_results(geodrains):
+        ax.plot(t_days, result["u_avg"], linewidth=3, label=f"Geodrenos - {label}")
 
     ax.set_xlabel("Tempo [dias]")
     ax.set_ylabel("Excesso médio de pressão neutra [kPa]")
@@ -271,42 +276,6 @@ def plot_pressure_profile(t_days, z_vals, u_matrix):
     ax.set_title("Distribuição de pressão neutra - Terzaghi 1D")
     ax.grid(True)
     ax.legend()
-
-    return fig
-
-
-def plot_characteristic_times(t50_1D, t90_1D, t95_1D, t50_geo=None, t90_geo=None, t95_geo=None):
-    labels = ["t50", "t90", "t95"]
-
-    terzaghi_times = [
-        t50_1D if t50_1D is not None else np.nan,
-        t90_1D if t90_1D is not None else np.nan,
-        t95_1D if t95_1D is not None else np.nan
-    ]
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    x = np.arange(len(labels))
-    width = 0.35
-
-    if t50_geo is None:
-        ax.bar(x, terzaghi_times, width, label="Terzaghi 1D")
-    else:
-        geo_times = [
-            t50_geo if t50_geo is not None else np.nan,
-            t90_geo if t90_geo is not None else np.nan,
-            t95_geo if t95_geo is not None else np.nan
-        ]
-
-        ax.bar(x - width / 2, terzaghi_times, width, label="Terzaghi 1D")
-        ax.bar(x + width / 2, geo_times, width, label="Geodrenos")
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels)
-    ax.set_ylabel("Tempo [dias]")
-    ax.set_title("Tempos característicos de consolidação")
-    ax.grid(True, axis="y")
-    ax.legend()
-
     return fig
 
 
@@ -360,17 +329,29 @@ st.markdown("""
 
 st.markdown("---")
 
+# El selector queda fuera del formulario para que los campos de geodrenos aparezcan inmediatamente.
 st.header("Entrada de dados")
 
-with st.form("input_form"):
+analysis_mode = st.radio(
+    "Tipo de análise",
+    [
+        "Somente consolidação 1D",
+        "Comparação: consolidação 1D vs geodrenos"
+    ],
+    key="analysis_mode"
+)
 
-    analysis_mode = st.radio(
-        "Tipo de análise",
-        [
-            "Somente consolidação 1D",
-            "Comparação: consolidação 1D vs geodrenos"
-        ]
-    )
+if analysis_mode == "Comparação: consolidação 1D vs geodrenos":
+    malha_path = "malha.png"
+    if os.path.exists(malha_path):
+        st.subheader("Geometria dos geodrenos")
+        st.image(
+            malha_path,
+            caption="Padrões de instalação e parâmetros geométricos dos geodrenos.",
+            width="stretch"
+        )
+
+with st.form("input_form"):
 
     col1, col2, col3 = st.columns(3)
 
@@ -388,8 +369,16 @@ with st.form("input_form"):
         t_max_days = st.number_input("Tempo máximo [dias]", value=1000.0, min_value=1.0)
 
     with col3:
-        n_t = st.slider("Pontos no tempo", 30, 150, 80)
-        n_z = st.slider("Pontos em profundidade", 10, 40, 20)
+        n_t = st.slider("Pontos no tempo", 30, 120, 70)
+        n_z = st.slider("Pontos em profundidade", 10, 35, 18)
+
+    # Valores por defecto para evitar NameError cuando se usa solo 1D
+    ch = None
+    spacing = None
+    pattern = None
+    a = None
+    b = None
+    compare_meshes = False
 
     if analysis_mode == "Comparação: consolidação 1D vs geodrenos":
 
@@ -402,7 +391,7 @@ with st.form("input_form"):
             spacing = st.number_input("Espaçamento entre geodrenos s [m]", value=1.5, min_value=0.1)
 
         with col5:
-            pattern = st.selectbox("Tipo de malha", ["Malha triangular", "Malha quadrada"])
+            pattern = st.selectbox("Tipo de malha principal", ["Malha triangular", "Malha quadrada"])
             a = st.number_input("Largura do geodreno a [m]", value=0.10, min_value=0.001)
 
         with col6:
@@ -429,18 +418,19 @@ if submitted:
     geodrains = None
 
     if analysis_mode == "Comparação: consolidação 1D vs geodrenos":
-            if compare_meshes:
-                patterns_to_calculate = ["Malha triangular", "Malha quadrada"]
-            else:
-                patterns_to_calculate = [pattern]
 
-            geodrains = {}
+        if compare_meshes:
+            patterns_to_calculate = ["Malha triangular", "Malha quadrada"]
+        else:
+            patterns_to_calculate = [pattern]
 
-            for current_pattern in patterns_to_calculate:
-                geodrains[current_pattern] = calculate_geodrains(
-                    H, cv, ch, delta_sigma, mv, drainage_1D,
-                    spacing, current_pattern, a, b, t_max_days, n_t
-                )
+        geodrains = {}
+
+        for current_pattern in patterns_to_calculate:
+            geodrains[current_pattern] = calculate_geodrains(
+                H, cv, ch, delta_sigma, mv, drainage_1D,
+                spacing, current_pattern, a, b, t_max_days, n_t
+            )
 
     t_days = terzaghi["t_days"]
     S_final = terzaghi["S_final"]
@@ -469,8 +459,9 @@ if submitted:
 
     if geodrains is not None:
         if len(geodrains) == 1:
-            only_result = next(iter(geodrains.values()))
-            col4.metric("U final com geodrenos", f"{only_result['U'][-1] * 100:.2f} %")
+            only_label = next(iter(geodrains))
+            only_result = geodrains[only_label]
+            col4.metric(f"U final {only_label}", f"{only_result['U'][-1] * 100:.2f} %")
         else:
             col4.metric("Modo", "Comparação de malhas")
     else:
@@ -492,16 +483,21 @@ if submitted:
 
         data = {
             "Indicador": ["t50 [dias]", "t90 [dias]", "t95 [dias]", "Recalque final [cm]"],
-            "Terzaghi 1D": [t50_1D, t90_1D, t95_1D, S_final * 100]
+            "Terzaghi 1D": [
+                format_time(t50_1D),
+                format_time(t90_1D),
+                format_time(t95_1D),
+                f"{S_final * 100:.2f}"
+            ]
         }
 
         if geodrains is not None:
             for label, times in geodrain_times.items():
                 data[label] = [
-                    times["t50"],
-                    times["t90"],
-                    times["t95"],
-                    S_final * 100
+                    format_time(times["t50"]),
+                    format_time(times["t90"]),
+                    format_time(times["t95"]),
+                    f"{S_final * 100:.2f}"
                 ]
 
         st.dataframe(data, width="stretch")
@@ -530,46 +526,25 @@ if submitted:
 
     with tabs[1]:
 
-        fig = plot_consolidation(
-            t_days,
-            terzaghi["U"],
-            geodrains
-        )
-
+        fig = plot_consolidation(t_days, terzaghi["U"], geodrains)
         st.pyplot(fig)
         plt.close(fig)
 
     with tabs[2]:
 
-        fig = plot_settlement(
-            t_days,
-            terzaghi["settlement"],
-            S_final,
-            geodrains
-        )
-
+        fig = plot_settlement(t_days, terzaghi["settlement"], S_final, geodrains)
         st.pyplot(fig)
         plt.close(fig)
 
     with tabs[3]:
 
-        fig = plot_pore_pressure(
-            t_days,
-            terzaghi["u_avg"],
-            geodrains
-        )
-
+        fig = plot_pore_pressure(t_days, terzaghi["u_avg"], geodrains)
         st.pyplot(fig)
         plt.close(fig)
 
     with tabs[4]:
 
-        fig = plot_pressure_profile(
-            t_days,
-            terzaghi["z_vals"],
-            terzaghi["u_matrix"]
-        )
-
+        fig = plot_pressure_profile(t_days, terzaghi["z_vals"], terzaghi["u_matrix"])
         st.pyplot(fig)
         plt.close(fig)
 
@@ -585,18 +560,19 @@ if submitted:
         if geodrains is not None:
             st.markdown(f"""
             Para os parâmetros inseridos, o recalque final primário estimado é de
-            **{S_final * 100:.2f} cm** nos dois casos.
+            **{S_final * 100:.2f} cm**.
 
-            Isso ocorre porque o recalque final depende principalmente de **mv**, **Δσ** e **H**,
-            e não diretamente da presença dos geodrenos.
+            Esse recalque final é o mesmo para o caso 1D e para o caso com geodrenos,
+            pois depende principalmente de **mv**, **Δσ** e **H**.
 
             A diferença fundamental está no tempo necessário para atingir esse recalque.
             No modelo 1D, a dissipação do excesso de pressão neutra ocorre por drenagem vertical.
             Com geodrenos, a água passa a escoar radialmente em direção aos drenos,
             encurtando o caminho de drenagem e acelerando a consolidação.
 
-            Portanto, os geodrenos **não aumentam o recalque final primário**.
-            Eles reduzem significativamente o tempo necessário para atingi-lo.
+            Quando as duas malhas são comparadas simultaneamente, a malha triangular tende a
+            apresentar uma consolidação levemente mais rápida, pois possui menor diâmetro de
+            influência equivalente para o mesmo espaçamento entre geodrenos.
             """)
         else:
             st.markdown(f"""
@@ -693,6 +669,16 @@ if submitted:
 
         st.latex(r"""
         F(n)=\ln(n)-0.75
+        """)
+
+        st.write("Para as malhas usuais:")
+
+        st.latex(r"""
+        d_e = 1.05s \quad \text{(malha triangular)}
+        """)
+
+        st.latex(r"""
+        d_e = 1.13s \quad \text{(malha quadrada)}
         """)
 
         st.markdown("---")
