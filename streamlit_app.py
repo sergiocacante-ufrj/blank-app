@@ -429,10 +429,18 @@ if submitted:
     geodrains = None
 
     if analysis_mode == "Comparação: consolidação 1D vs geodrenos":
-        geodrains = calculate_geodrains(
-            H, cv, ch, delta_sigma, mv, drainage_1D,
-            spacing, pattern, a, b, t_max_days, n_t
-        )
+            if compare_meshes:
+                patterns_to_calculate = ["Malha triangular", "Malha quadrada"]
+            else:
+                patterns_to_calculate = [pattern]
+
+            geodrains = {}
+
+            for current_pattern in patterns_to_calculate:
+                geodrains[current_pattern] = calculate_geodrains(
+                    H, cv, ch, delta_sigma, mv, drainage_1D,
+                    spacing, current_pattern, a, b, t_max_days, n_t
+                )
 
     t_days = terzaghi["t_days"]
     S_final = terzaghi["S_final"]
