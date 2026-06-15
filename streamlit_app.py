@@ -1,5 +1,8 @@
 import os
+from io import BytesIO
+
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import mpmath as mp
 import streamlit as st
@@ -15,6 +18,29 @@ st.set_page_config(
 )
 
 mp.mp.dps = 30
+
+# Estilo del botón de descarga
+st.markdown(
+    """
+    <style>
+    div.stDownloadButton > button:first-child {
+        background: linear-gradient(90deg, #0ea5e9, #22c55e);
+        color: white;
+        font-weight: 800;
+        border: 0px;
+        border-radius: 12px;
+        padding: 0.75rem 1.25rem;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+    }
+    div.stDownloadButton > button:first-child:hover {
+        background: linear-gradient(90deg, #0284c7, #16a34a);
+        color: white;
+        border: 0px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # ============================================================
 # FUNCIONES DE CÁLCULO
@@ -145,16 +171,11 @@ def calculate_geodrains(H, cv, ch, delta_sigma, mv, drainage_1D, spacing, patter
 
     if pattern == "Malha triangular":
         de = 1.05 * spacing
-    elif pattern == "Malha quadrada":
-        de = 1.13 * spacing
     else:
-        raise ValueError("pattern deve ser 'Malha triangular' ou 'Malha quadrada'")
+        de = 1.13 * spacing
 
     n = de / dw
     F_n = np.log(n) - 0.75
-
-    if F_n <= 0:
-        F_n = 1e-6
 
     Th = ch * t_seconds / de**2
     Uh = 1 - np.exp(-8 * Th / F_n)
@@ -180,42 +201,38 @@ def calculate_geodrains(H, cv, ch, delta_sigma, mv, drainage_1D, spacing, patter
         "dw": dw,
         "de": de,
         "n": n,
-        "F_n": F_n
+        "F_n": F_n,
+        "pattern": pattern
     }
-
-
-# ============================================================
-# FUNCIONES AUXILIARES PARA GEODRENOS
-# ============================================================
-
-def iter_geodrain_results(geodrains):
-    if geodrains is None:
-        return []
-    return list(geodrains.items())
-
-
-def format_time(value):
-    if value is None or (isinstance(value, float) and np.isnan(value)):
-        return "Não alcança"
-    return f"{value:.1f}"
 
 
 # ============================================================
 # FUNCIONES DE GRÁFICAS
 # ============================================================
 
+def _iter_geodrain_results(geodrains):
+    if geodrains is None:
+        return []
+
+    if isinstance(geodrains, dict) and "U" not in geodrains:
+        return list(geodrains.items())
+
+    return [("Geodrenos - Barron + Carrillo", geodrains)]
+
+
 def plot_consolidation(t_days, U_1D, geodrains=None):
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.plot(t_days, U_1D * 100, linewidth=3, label="Terzaghi 1D - Laplace")
 
-    for label, result in iter_geodrain_results(geodrains):
-        ax.plot(t_days, result["U"] * 100, linewidth=3, label=f"Geodrenos - {label}")
+    for label, result in _iter_geodrain_results(geodrains):
+        ax.plot(t_days, result["U"] * 100, linewidth=3, label=label)
 
     ax.set_xlabel("Tempo [dias]")
     ax.set_ylabel("Grau de consolidação [%]")
     ax.set_title("Grau de consolidação")
     ax.grid(True)
     ax.legend()
+    fig.tight_layout()
     return fig
 
 
@@ -223,8 +240,8 @@ def plot_settlement(t_days, settlement_1D, S_final, geodrains=None):
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.plot(t_days, settlement_1D * 100, linewidth=3, label="Terzaghi 1D - Laplace")
 
-    for label, result in iter_geodrain_results(geodrains):
-        ax.plot(t_days, result["settlement"] * 100, linewidth=3, label=f"Geodrenos - {label}")
+    for label, result in _iter_geodrain_results(geodrains):
+        ax.plot(t_days, result["settlement"] * 100, linewidth=3, label=label)
 
     ax.axhline(S_final * 100, linestyle="--", label="Recalque final")
     ax.set_xlabel("Tempo [dias]")
@@ -232,6 +249,7 @@ def plot_settlement(t_days, settlement_1D, S_final, geodrains=None):
     ax.set_title("Recalque ao longo do tempo")
     ax.grid(True)
     ax.legend()
+    fig.tight_layout()
     return fig
 
 
@@ -239,14 +257,15 @@ def plot_pore_pressure(t_days, u_1D_avg, geodrains=None):
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.plot(t_days, u_1D_avg, linewidth=3, label="Terzaghi 1D")
 
-    for label, result in iter_geodrain_results(geodrains):
-        ax.plot(t_days, result["u_avg"], linewidth=3, label=f"Geodrenos - {label}")
+    for label, result in _iter_geodrain_results(geodrains):
+        ax.plot(t_days, result["u_avg"], linewidth=3, label=label)
 
     ax.set_xlabel("Tempo [dias]")
     ax.set_ylabel("Excesso médio de pressão neutra [kPa]")
     ax.set_title("Dissipação média da pressão neutra")
     ax.grid(True)
     ax.legend()
+    fig.tight_layout()
     return fig
 
 
@@ -276,7 +295,158 @@ def plot_pressure_profile(t_days, z_vals, u_matrix):
     ax.set_title("Distribuição de pressão neutra - Terzaghi 1D")
     ax.grid(True)
     ax.legend()
+    fig.tight_layout()
     return fig
+
+
+# ============================================================
+# FUNCIONES PARA RELATÓRIO EXCEL
+# ============================================================
+
+def fig_to_image_data(fig, dpi=160):
+    img = BytesIO()
+    fig.savefig(img, format="png", dpi=dpi, bbox_inches="tight")
+    img.seek(0)
+    return img
+
+
+def build_excel_report(inputs, terzaghi, geodrains, geodrain_times):
+    output = BytesIO()
+
+    t_days = terzaghi["t_days"]
+    S_final = terzaghi["S_final"]
+
+    t50_1D = time_for_U(terzaghi["U"], 0.50, t_days)
+    t90_1D = time_for_U(terzaghi["U"], 0.90, t_days)
+    t95_1D = time_for_U(terzaghi["U"], 0.95, t_days)
+
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        workbook = writer.book
+
+        header_fmt = workbook.add_format({
+            "bold": True,
+            "bg_color": "#0EA5E9",
+            "font_color": "white",
+            "border": 1
+        })
+        number_fmt = workbook.add_format({"num_format": "0.0000"})
+        percent_fmt = workbook.add_format({"num_format": "0.00"})
+        title_fmt = workbook.add_format({"bold": True, "font_size": 14})
+
+        # -------------------------
+        # Inputs
+        # -------------------------
+        inputs_df = pd.DataFrame(list(inputs.items()), columns=["Parâmetro", "Valor"])
+        inputs_df.to_excel(writer, sheet_name="Inputs", index=False)
+        ws = writer.sheets["Inputs"]
+        ws.set_column("A:A", 35)
+        ws.set_column("B:B", 25)
+        ws.write(0, 0, "Parâmetro", header_fmt)
+        ws.write(0, 1, "Valor", header_fmt)
+
+        # -------------------------
+        # Resumo
+        # -------------------------
+        resumo = {
+            "Indicador": ["t50 [dias]", "t90 [dias]", "t95 [dias]", "Recalque final [cm]", "U final [%]", "u média final [kPa]"],
+            "Terzaghi 1D": [
+                t50_1D,
+                t90_1D,
+                t95_1D,
+                S_final * 100,
+                terzaghi["U"][-1] * 100,
+                terzaghi["u_avg"][-1]
+            ]
+        }
+
+        if geodrains is not None:
+            for label, result in _iter_geodrain_results(geodrains):
+                times = geodrain_times.get(label, {})
+                resumo[label] = [
+                    times.get("t50"),
+                    times.get("t90"),
+                    times.get("t95"),
+                    S_final * 100,
+                    result["U"][-1] * 100,
+                    result["u_avg"][-1]
+                ]
+
+        resumo_df = pd.DataFrame(resumo)
+        resumo_df.to_excel(writer, sheet_name="Resumo", index=False)
+        ws = writer.sheets["Resumo"]
+        ws.set_column("A:A", 28)
+        ws.set_column("B:Z", 22, number_fmt)
+        for col, name in enumerate(resumo_df.columns):
+            ws.write(0, col, name, header_fmt)
+
+        # -------------------------
+        # Resultados por tempo
+        # -------------------------
+        tempo_df = pd.DataFrame({
+            "Tempo [dias]": t_days,
+            "U Terzaghi 1D [%]": terzaghi["U"] * 100,
+            "Recalque Terzaghi 1D [cm]": terzaghi["settlement"] * 100,
+            "u média Terzaghi 1D [kPa]": terzaghi["u_avg"]
+        })
+
+        if geodrains is not None:
+            for label, result in _iter_geodrain_results(geodrains):
+                tempo_df[f"U {label} [%]"] = result["U"] * 100
+                tempo_df[f"Recalque {label} [cm]"] = result["settlement"] * 100
+                tempo_df[f"u média {label} [kPa]"] = result["u_avg"]
+
+        tempo_df.to_excel(writer, sheet_name="Resultados_Tempo", index=False)
+        ws = writer.sheets["Resultados_Tempo"]
+        ws.set_column("A:Z", 23, number_fmt)
+        for col, name in enumerate(tempo_df.columns):
+            ws.write(0, col, name, header_fmt)
+
+        # -------------------------
+        # Geometria dos geodrenos
+        # -------------------------
+        if geodrains is not None:
+            geom_rows = []
+            for label, result in _iter_geodrain_results(geodrains):
+                geom_rows.append({
+                    "Malha": label,
+                    "dw [m]": result["dw"],
+                    "de [m]": result["de"],
+                    "n = de/dw [-]": result["n"],
+                    "F(n) [-]": result["F_n"]
+                })
+            geom_df = pd.DataFrame(geom_rows)
+            geom_df.to_excel(writer, sheet_name="Geometria_Geodrenos", index=False)
+            ws = writer.sheets["Geometria_Geodrenos"]
+            ws.set_column("A:A", 28)
+            ws.set_column("B:Z", 18, number_fmt)
+            for col, name in enumerate(geom_df.columns):
+                ws.write(0, col, name, header_fmt)
+
+        # -------------------------
+        # Gráficos
+        # -------------------------
+        ws = workbook.add_worksheet("Graficos")
+        ws.write("A1", "GeoLaplace - Relatório gráfico", title_fmt)
+
+        fig1 = plot_consolidation(t_days, terzaghi["U"], geodrains)
+        fig2 = plot_settlement(t_days, terzaghi["settlement"], S_final, geodrains)
+        fig3 = plot_pore_pressure(t_days, terzaghi["u_avg"], geodrains)
+        fig4 = plot_pressure_profile(t_days, terzaghi["z_vals"], terzaghi["u_matrix"])
+
+        figures = [
+            (fig1, "A3"),
+            (fig2, "J3"),
+            (fig3, "A25"),
+            (fig4, "J25")
+        ]
+
+        for fig, cell in figures:
+            img = fig_to_image_data(fig)
+            ws.insert_image(cell, "grafico.png", {"image_data": img, "x_scale": 0.65, "y_scale": 0.65})
+            plt.close(fig)
+
+    output.seek(0)
+    return output.getvalue()
 
 
 # ============================================================
@@ -329,7 +499,6 @@ st.markdown("""
 
 st.markdown("---")
 
-# El selector queda fuera del formulario para que los campos de geodrenos aparezcan inmediatamente.
 st.header("Entrada de dados")
 
 analysis_mode = st.radio(
@@ -340,16 +509,6 @@ analysis_mode = st.radio(
     ],
     key="analysis_mode"
 )
-
-if analysis_mode == "Comparação: consolidação 1D vs geodrenos":
-    malha_path = "malha.png"
-    if os.path.exists(malha_path):
-        st.subheader("Geometria dos geodrenos")
-        st.image(
-            malha_path,
-            caption="Padrões de instalação e parâmetros geométricos dos geodrenos.",
-            width="stretch"
-        )
 
 with st.form("input_form"):
 
@@ -369,10 +528,9 @@ with st.form("input_form"):
         t_max_days = st.number_input("Tempo máximo [dias]", value=1000.0, min_value=1.0)
 
     with col3:
-        n_t = st.slider("Pontos no tempo", 30, 120, 70)
-        n_z = st.slider("Pontos em profundidade", 10, 35, 18)
+        n_t = st.slider("Pontos no tempo", 30, 120, 60)
+        n_z = st.slider("Pontos em profundidade", 10, 30, 15)
 
-    # Valores por defecto para evitar NameError cuando se usa solo 1D
     ch = None
     spacing = None
     pattern = None
@@ -381,6 +539,16 @@ with st.form("input_form"):
     compare_meshes = False
 
     if analysis_mode == "Comparação: consolidação 1D vs geodrenos":
+
+        st.subheader("Geometria dos geodrenos")
+        if os.path.exists("malha.png"):
+            st.image(
+                "malha.png",
+                caption="Padrões de instalação e parâmetros geométricos dos geodrenos.",
+                width="stretch"
+            )
+        else:
+            st.info("Imagem 'malha.png' não encontrada. O cálculo pode ser executado normalmente.")
 
         st.subheader("Parâmetros dos geodrenos")
 
@@ -391,7 +559,7 @@ with st.form("input_form"):
             spacing = st.number_input("Espaçamento entre geodrenos s [m]", value=1.5, min_value=0.1)
 
         with col5:
-            pattern = st.selectbox("Tipo de malha principal", ["Malha triangular", "Malha quadrada"])
+            pattern = st.selectbox("Tipo de malha", ["Malha triangular", "Malha quadrada"])
             a = st.number_input("Largura do geodreno a [m]", value=0.10, min_value=0.001)
 
         with col6:
@@ -409,6 +577,28 @@ with st.form("input_form"):
 # ============================================================
 
 if submitted:
+
+    inputs = {
+        "Tipo de análise": analysis_mode,
+        "H [m]": H,
+        "cv [m²/s]": cv,
+        "Condição de drenagem": drainage_1D,
+        "Δσ [kPa]": delta_sigma,
+        "mv [1/kPa]": mv,
+        "Tempo máximo [dias]": t_max_days,
+        "Pontos no tempo": n_t,
+        "Pontos em profundidade": n_z
+    }
+
+    if analysis_mode == "Comparação: consolidação 1D vs geodrenos":
+        inputs.update({
+            "ch [m²/s]": ch,
+            "Espaçamento s [m]": spacing,
+            "Tipo de malha selecionado": pattern,
+            "Largura a [m]": a,
+            "Espessura b [m]": b,
+            "Comparar triangular e quadrada": compare_meshes
+        })
 
     with st.spinner("Calculando consolidação 1D por Transformada Inversa de Laplace..."):
         terzaghi = calculate_terzaghi(
@@ -441,7 +631,7 @@ if submitted:
 
     geodrain_times = {}
     if geodrains is not None:
-        for label, result in geodrains.items():
+        for label, result in _iter_geodrain_results(geodrains):
             geodrain_times[label] = {
                 "t50": time_for_U(result["U"], 0.50, t_days),
                 "t90": time_for_U(result["U"], 0.90, t_days),
@@ -459,13 +649,25 @@ if submitted:
 
     if geodrains is not None:
         if len(geodrains) == 1:
-            only_label = next(iter(geodrains))
-            only_result = geodrains[only_label]
-            col4.metric(f"U final {only_label}", f"{only_result['U'][-1] * 100:.2f} %")
+            only_result = next(iter(geodrains.values()))
+            col4.metric("U final com geodrenos", f"{only_result['U'][-1] * 100:.2f} %")
         else:
             col4.metric("Modo", "Comparação de malhas")
     else:
         col4.metric("Modo", "1D")
+
+    # --------------------------------------------------------
+    # Botón de descarga del relatório Excel
+    # --------------------------------------------------------
+    excel_bytes = build_excel_report(inputs, terzaghi, geodrains, geodrain_times)
+
+    st.download_button(
+        label="📥 Baixar relatório Excel completo",
+        data=excel_bytes,
+        file_name="GeoLaplace_relatorio.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        help="Baixa um relatório com dados de entrada, resumo, resultados por tempo, parâmetros geométricos e gráficos."
+    )
 
     tabs = st.tabs([
         "Resumo",
@@ -483,21 +685,16 @@ if submitted:
 
         data = {
             "Indicador": ["t50 [dias]", "t90 [dias]", "t95 [dias]", "Recalque final [cm]"],
-            "Terzaghi 1D": [
-                format_time(t50_1D),
-                format_time(t90_1D),
-                format_time(t95_1D),
-                f"{S_final * 100:.2f}"
-            ]
+            "Terzaghi 1D": [t50_1D, t90_1D, t95_1D, S_final * 100]
         }
 
         if geodrains is not None:
             for label, times in geodrain_times.items():
                 data[label] = [
-                    format_time(times["t50"]),
-                    format_time(times["t90"]),
-                    format_time(times["t95"]),
-                    f"{S_final * 100:.2f}"
+                    times["t50"],
+                    times["t90"],
+                    times["t95"],
+                    S_final * 100
                 ]
 
         st.dataframe(data, width="stretch")
@@ -514,7 +711,7 @@ if submitted:
                 ]
             }
 
-            for label, result in geodrains.items():
+            for label, result in _iter_geodrain_results(geodrains):
                 geom_data[label] = [
                     f"{result['dw']:.4f}",
                     f"{result['de']:.4f}",
@@ -525,25 +722,21 @@ if submitted:
             st.dataframe(geom_data, width="stretch")
 
     with tabs[1]:
-
         fig = plot_consolidation(t_days, terzaghi["U"], geodrains)
         st.pyplot(fig)
         plt.close(fig)
 
     with tabs[2]:
-
         fig = plot_settlement(t_days, terzaghi["settlement"], S_final, geodrains)
         st.pyplot(fig)
         plt.close(fig)
 
     with tabs[3]:
-
         fig = plot_pore_pressure(t_days, terzaghi["u_avg"], geodrains)
         st.pyplot(fig)
         plt.close(fig)
 
     with tabs[4]:
-
         fig = plot_pressure_profile(t_days, terzaghi["z_vals"], terzaghi["u_matrix"])
         st.pyplot(fig)
         plt.close(fig)
@@ -560,19 +753,18 @@ if submitted:
         if geodrains is not None:
             st.markdown(f"""
             Para os parâmetros inseridos, o recalque final primário estimado é de
-            **{S_final * 100:.2f} cm**.
+            **{S_final * 100:.2f} cm** nos casos analisados.
 
-            Esse recalque final é o mesmo para o caso 1D e para o caso com geodrenos,
-            pois depende principalmente de **mv**, **Δσ** e **H**.
+            Isso ocorre porque o recalque final depende principalmente de **mv**, **Δσ** e **H**,
+            e não diretamente da presença dos geodrenos.
 
             A diferença fundamental está no tempo necessário para atingir esse recalque.
             No modelo 1D, a dissipação do excesso de pressão neutra ocorre por drenagem vertical.
             Com geodrenos, a água passa a escoar radialmente em direção aos drenos,
             encurtando o caminho de drenagem e acelerando a consolidação.
 
-            Quando as duas malhas são comparadas simultaneamente, a malha triangular tende a
-            apresentar uma consolidação levemente mais rápida, pois possui menor diâmetro de
-            influência equivalente para o mesmo espaçamento entre geodrenos.
+            A malha triangular tende a apresentar consolidação ligeiramente mais rápida que a malha quadrada,
+            pois seu diâmetro equivalente de influência é menor para o mesmo espaçamento entre drenos.
             """)
         else:
             st.markdown(f"""
@@ -600,33 +792,17 @@ if submitted:
         """)
 
         st.write("Condição inicial:")
-
-        st.latex(r"""
-        u(z,0)=\Delta\sigma
-        """)
+        st.latex(r"""u(z,0)=\Delta\sigma""")
 
         st.write("Para drenagem dupla:")
-
-        st.latex(r"""
-        u(0,t)=0
-        """)
-
-        st.latex(r"""
-        u(H,t)=0
-        """)
+        st.latex(r"""u(0,t)=0""")
+        st.latex(r"""u(H,t)=0""")
 
         st.write("Para drenagem simples:")
-
-        st.latex(r"""
-        u(0,t)=0
-        """)
-
-        st.latex(r"""
-        \frac{\partial u(H,t)}{\partial z}=0
-        """)
+        st.latex(r"""u(0,t)=0""")
+        st.latex(r"""\frac{\partial u(H,t)}{\partial z}=0""")
 
         st.write("Aplicando a Transformada de Laplace no tempo:")
-
         st.latex(r"""
         sU(z,s)-u(z,0)
         =
@@ -652,54 +828,23 @@ if submitted:
         """)
 
         st.write("O fator de tempo horizontal é:")
-
-        st.latex(r"""
-        T_h=\frac{c_h t}{d_e^2}
-        """)
+        st.latex(r"""T_h=\frac{c_h t}{d_e^2}""")
 
         st.write("A solução média de Barron é:")
-
-        st.latex(r"""
-        U_h = 1 - \exp\left(-\frac{8T_h}{F(n)}\right)
-        """)
-
-        st.latex(r"""
-        n=\frac{d_e}{d_w}
-        """)
-
-        st.latex(r"""
-        F(n)=\ln(n)-0.75
-        """)
-
-        st.write("Para as malhas usuais:")
-
-        st.latex(r"""
-        d_e = 1.05s \quad \text{(malha triangular)}
-        """)
-
-        st.latex(r"""
-        d_e = 1.13s \quad \text{(malha quadrada)}
-        """)
+        st.latex(r"""U_h = 1 - \exp\left(-\frac{8T_h}{F(n)}\right)""")
+        st.latex(r"""n=\frac{d_e}{d_w}""")
+        st.latex(r"""F(n)=\ln(n)-0.75""")
 
         st.markdown("---")
 
         st.markdown("### 3. Consolidação combinada de Carrillo")
-
-        st.latex(r"""
-        U = 1-(1-U_v)(1-U_h)
-        """)
+        st.latex(r"""U = 1-(1-U_v)(1-U_h)""")
 
         st.markdown("---")
 
         st.markdown("### 4. Recalque primário")
-
-        st.latex(r"""
-        S_f=m_v\Delta\sigma H
-        """)
-
-        st.latex(r"""
-        S(t)=U(t)S_f
-        """)
+        st.latex(r"""S_f=m_v\Delta\sigma H""")
+        st.latex(r"""S(t)=U(t)S_f""")
 
 else:
     st.info("Insira os dados e clique em **Executar análise**.")
