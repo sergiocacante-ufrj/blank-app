@@ -10,7 +10,7 @@ import streamlit as st
 
 st.set_page_config(
     page_title="GeoLaplace",
-    page_icon="🌍",
+    page_icon="🌍🌍",cp /mnt/data/streamlit_app_mesh_compare.py streamlit_app.py
     layout="wide"
 )
 
